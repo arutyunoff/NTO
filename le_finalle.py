@@ -274,9 +274,8 @@ def load_and_merge_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.
         parse_dates=[constants.COL_TIMESTAMP],
     )
 
-    initial_count = len(train_df)
-    train_df = train_df[train_df[constants.COL_HAS_READ] == 1].copy()
-    print(f"Filtered training data: {initial_count} -> {len(train_df)} rows (only has_read=1)")
+    # НЕ фильтруем has_read — используем всё для фичей
+    print(f"Loaded training data: {len(train_df)} rows (has_read = 0 и has_read = 1)")
 
     test_df = pd.read_csv(
         config.RAW_DATA_DIR / constants.TEST_FILENAME,
@@ -582,6 +581,7 @@ def add_text_features(df: pd.DataFrame, train_df: pd.DataFrame, descriptions_df:
     config.MODEL_DIR.mkdir(parents=True, exist_ok=True)
     vectorizer_path = config.MODEL_DIR / constants.TFIDF_VECTORIZER_FILENAME
 
+    # ВАЖНО: только по has_read=1 (train_df уже отфильтрован выше)
     train_books = train_df[constants.COL_BOOK_ID].unique()
     train_descriptions = descriptions_df[descriptions_df[constants.COL_BOOK_ID].isin(train_books)].copy()
     train_descriptions[constants.COL_DESCRIPTION] = train_descriptions[constants.COL_DESCRIPTION].fillna("")
@@ -803,7 +803,12 @@ def create_features(
 ) -> pd.DataFrame:
     """Runs the full feature engineering pipeline."""
     print("Starting feature engineering pipeline...")
-    train_df = df[df[constants.COL_SOURCE] == constants.VAL_SOURCE_TRAIN].copy()
+
+    # ДЛЯ таргет-статистик используем только has_read=1
+    train_df = df[
+        (df[constants.COL_SOURCE] == constants.VAL_SOURCE_TRAIN)
+        & (df[constants.COL_HAS_READ] == 1)
+    ].copy()
 
     if include_aggregates:
         df = add_aggregate_features(df, train_df)
@@ -866,7 +871,10 @@ def train() -> None:
     featured_df = reduce_mem_usage(featured_df)
     gc.collect()
 
-    train_set = featured_df
+    # Для обучения используем только has_read = 1
+    train_set_full = featured_df
+    train_set = train_set_full[train_set_full[constants.COL_HAS_READ] == 1].copy()
+    print(f"Using {len(train_set)} rows with has_read = 1 for training (out of {len(train_set_full)})")
 
     if constants.COL_TIMESTAMP not in train_set.columns:
         raise ValueError(f"Timestamp column '{constants.COL_TIMESTAMP}' not found.")
@@ -1009,7 +1017,11 @@ def predict() -> None:
     print(f"Loading prepared data from {processed_path}...")
     featured_df = pd.read_parquet(processed_path, engine="pyarrow")
 
-    train_set = featured_df[featured_df[constants.COL_SOURCE] == constants.VAL_SOURCE_TRAIN].copy()
+    # train_set — только has_read=1 для таргет-статистик
+    train_set = featured_df[
+        (featured_df[constants.COL_SOURCE] == constants.VAL_SOURCE_TRAIN)
+        & (featured_df[constants.COL_HAS_READ] == 1)
+    ].copy()
     test_set = featured_df[featured_df[constants.COL_SOURCE] == constants.VAL_SOURCE_TEST].copy()
 
     print("\nComputing aggregate & advanced features on all train data...")
